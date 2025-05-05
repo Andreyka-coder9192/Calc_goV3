@@ -1,0 +1,22 @@
+syntax = "proto3";
+package calc;
+option go_package = "proto/calc;calc";
+service Calc {
+  rpc GetTask(Empty) returns (TaskResp) {}
+  rpc PostResult(ResultReq) returns (Empty) {}
+}
+
+message Empty {}
+
+message TaskResp {
+  string id = 1;
+  double arg1 = 2;
+  double arg2 = 3;
+  string operation = 4;
+  int32 operation_time = 5;
+}
+
+message ResultReq {
+  string id = 1;
+  double result = 2;
+}

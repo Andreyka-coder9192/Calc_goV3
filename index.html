@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>CalcGo Web Calculator</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h1 { color: #333; }
+    input, button { padding: 8px; font-size: 16px; }
+    #result { margin-top: 20px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>CalcGo Web Calculator</h1>
+  <form id="calcForm">
+    <label for="expression">Введите выражение:</label>
+    <input type="text" id="expression" name="expression" placeholder="Например, 2+2*2" required>
+    <button type="submit">Вычислить</button>
+  </form>
+  <div id="result"></div>
+  <script>
+    document.getElementById('calcForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const expression = document.getElementById('expression').value;
+      document.getElementById('result').innerText = 'Отправка запроса...';
+
+      // Отправляем запрос на создание выражения
+      const response = await fetch('http://localhost:8080/api/v1/calculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expression: expression })
+      });
+      const data = await response.json();
+      if (data.id) {
+        const exprId = data.id;
+        // Опрос результата каждую секунду
+        const intervalId = setInterval(async () => {
+          const res = await fetch(`http://localhost:8080/api/v1/expressions/${exprId}`);
+          const resData = await res.json();
+          if (resData.expression.status === 'completed') {
+            document.getElementById('result').innerText = 'Результат: ' + resData.expression.result;
+            clearInterval(intervalId);
+          } else {
+            document.getElementById('result').innerText = 'Статус: ' + resData.expression.status;
+          }
+        }, 1000);
+      } else {
+        document.getElementById('result').innerText = 'Ошибка при создании вычисления.';
+      }
+    });
+  </script>
+</body>
+</html>

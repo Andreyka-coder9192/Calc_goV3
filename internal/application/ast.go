@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/Andreyka-coder9192/calc_go/pkg/calculation"
 )
 
 type ASTNode struct {
@@ -145,4 +147,20 @@ func (p *parser) parseFactor() (*ASTNode, error) {
 		IsLeaf: true,
 		Value:  value,
 	}, nil
+}
+
+// В конце файла ast.go, после ParseAST и парсера:
+func EvalAST(node *ASTNode) (float64, error) {
+	if node.IsLeaf {
+		return node.Value, nil
+	}
+	left, err := EvalAST(node.Left)
+	if err != nil {
+		return 0, err
+	}
+	right, err := EvalAST(node.Right)
+	if err != nil {
+		return 0, err
+	}
+	return calculation.Compute(node.Operator, left, right)
 }

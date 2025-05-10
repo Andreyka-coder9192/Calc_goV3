@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Andreyka-coder9192/calc_go/pkg/calculation"
 	"github.com/Andreyka-coder9192/calc_go/proto/calc"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/cors"
@@ -285,52 +284,60 @@ func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskRe
 	}, nil
 }
 
+// PostResult — grpc-обработчик прихода результата от агента
 func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*calc.Empty, error) {
-	if _, err := o.db.Exec(
-		"UPDATE tasks SET done = 1, in_progress = 0 WHERE id = ?",
-		in.Id,
-	); err != nil {
-		return nil, status.Error(codes.Internal, "failed to update task")
-	}
-
+	// 1. Узнаём, к какому выражению (expr_id) относится эта задача
 	var exprID int64
 	if err := o.db.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", in.Id); err != nil {
 		return nil, status.Error(codes.NotFound, "task not found")
 	}
 
+	// 2. Помечаем задачу как выполненную
+	if _, err := o.db.Exec("UPDATE tasks SET done = 1 WHERE id = ?", in.Id); err != nil {
+		return nil, status.Error(codes.Internal, "failed to update task")
+	}
+
+	// 3. Перепланируем вновь доступные подзадачи из AST
 	var fullExpr string
 	if err := o.db.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID); err == nil {
-		if ast, err := ParseAST(fullExpr); err == nil {
+		ast, err := ParseAST(fullExpr)
+		if err == nil {
 			o.schedulePendingTasksDB(exprID, ast)
 		} else {
-			log.Printf("PostResult: failed to rebuild AST for expr %d: %v", exprID, err)
+			log.Printf("PostResult: cannot parse AST: %v", err)
 		}
-	} else {
-		log.Printf("PostResult: failed to load expr %d: %v", exprID, err)
 	}
 
+	// 4. Считаем, остались ли незавершённые задачи
 	var remaining int
 	if err := o.db.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID); err != nil {
-		return nil, status.Error(codes.Internal, "failed to count remaining tasks")
+		return nil, status.Error(codes.Internal, "failed to count tasks")
 	}
 
+	// 5. Если это была последняя — полностью вычисляем результат по AST
 	if remaining == 0 {
-		result, err := calculation.Calc(fullExpr)
+		// парсим AST заново
+		ast, err := ParseAST(fullExpr)
 		if err != nil {
-			log.Printf("PostResult: Calc error for expr %d: %v", exprID, err)
+			log.Printf("PostResult: final AST parse error: %v", err)
 		} else {
-			if _, err := o.db.Exec(
-				"UPDATE expressions SET status = ?, result = ? WHERE id = ?",
-				"done", result, exprID,
-			); err != nil {
-				log.Printf("PostResult: failed to update expression %d: %v", exprID, err)
+			result, err := EvalAST(ast)
+			if err != nil {
+				log.Printf("PostResult: AST evaluation error: %v", err)
+			} else {
+				// обновляем выражение в БД
+				if _, err := o.db.Exec(
+					"UPDATE expressions SET status = ?, result = ? WHERE id = ?",
+					"done", result, exprID,
+				); err != nil {
+					log.Printf("PostResult: failed to update expression: %v", err)
+				}
 			}
 		}
 	}
 
 	return &calc.Empty{}, nil
 }
-
 func (o *Orchestrator) RunServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/register", o.RegisterHandler)

@@ -6,47 +6,134 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
     h1 { color: #333; }
-    input, button { padding: 8px; font-size: 16px; }
+    input, button { padding: 8px; font-size: 16px; margin: 4px 0; }
     #result { margin-top: 20px; font-weight: bold; }
+    #auth, #calculator { max-width: 400px; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
-  <h1>CalcGo Web Calculator</h1>
-  <form id="calcForm">
-    <label for="expression">Введите выражение:</label>
-    <input type="text" id="expression" name="expression" placeholder="Например, 2+2*2" required>
-    <button type="submit">Вычислить</button>
-  </form>
-  <div id="result"></div>
-  <script>
-    document.getElementById('calcForm').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      const expression = document.getElementById('expression').value;
-      document.getElementById('result').innerText = 'Отправка запроса...';
+  <h1>CalcGo</h1>
 
-      // Отправляем запрос на создание выражения
-      const response = await fetch('http://localhost:8080/api/v1/calculate', {
+  <!-- Блок авторизации -->
+  <div id="auth">
+    <h2>Вход / Регистрация</h2>
+    <form id="registerForm">
+      <label for="regLogin">Логин:</label><br>
+      <input type="text" id="regLogin" required><br>
+      <label for="regPassword">Пароль:</label><br>
+      <input type="password" id="regPassword" required><br>
+      <button type="submit">Зарегистрироваться</button>
+    </form>
+    <form id="loginForm" style="margin-top:20px;">
+      <label for="loginLogin">Логин:</label><br>
+      <input type="text" id="loginLogin" required><br>
+      <label for="loginPassword">Пароль:</label><br>
+      <input type="password" id="loginPassword" required><br>
+      <button type="submit">Войти</button>
+    </form>
+    <div id="authMessage"></div>
+  </div>
+
+  <!-- Блок калькулятора -->
+  <div id="calculator" class="hidden">
+    <h2>Вычислитель</h2>
+    <form id="calcForm">
+      <label for="expression">Введите выражение:</label><br>
+      <input type="text" id="expression" placeholder="Например, 2+2*2" required><br>
+      <button type="submit">Вычислить</button>
+    </form>
+    <div id="result"></div>
+    <button id="logoutBtn" style="margin-top:20px;">Выйти</button>
+  </div>
+
+  <script>
+    const API = 'http://localhost:8080/api/v1';
+    let token = null;
+
+    // Функция для установки заголовка авторизации
+    function authHeaders() {
+      return {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      };
+    }
+
+    // Регистрация
+    document.getElementById('registerForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const login = document.getElementById('regLogin').value;
+      const pwd = document.getElementById('regPassword').value;
+      const res = await fetch(API + '/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expression: expression })
+        body: JSON.stringify({ login, password: pwd })
       });
-      const data = await response.json();
+      if (res.ok) {
+        document.getElementById('authMessage').innerText = 'Успешная регистрация, теперь войдите.';
+      } else {
+        document.getElementById('authMessage').innerText = 'Ошибка регистрации.';
+      }
+    });
+
+    // Логин
+    document.getElementById('loginForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const login = document.getElementById('loginLogin').value;
+      const pwd = document.getElementById('loginPassword').value;
+      const res = await fetch(API + '/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login, password: pwd })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        token = data.token;
+        document.getElementById('auth').classList.add('hidden');
+        document.getElementById('calculator').classList.remove('hidden');
+      } else {
+        document.getElementById('authMessage').innerText = 'Неверные учетные данные.';
+      }
+    });
+
+    // Калькулятор
+    document.getElementById('calcForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const expr = document.getElementById('expression').value;
+      document.getElementById('result').innerText = 'Отправка запроса...';
+
+      const resp = await fetch(API + '/calculate', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ expression: expr })
+      });
+      const data = await resp.json();
       if (data.id) {
         const exprId = data.id;
-        // Опрос результата каждую секунду
         const intervalId = setInterval(async () => {
-          const res = await fetch(`http://localhost:8080/api/v1/expressions/${exprId}`);
-          const resData = await res.json();
-          if (resData.expression.status === 'completed') {
-            document.getElementById('result').innerText = 'Результат: ' + resData.expression.result;
+          const statusResp = await fetch(`http://localhost:8080/api/v1/expressions/${exprId}`, {
+            headers: authHeaders()
+          });
+          const statusData = await statusResp.json();
+          if (statusData.expression.status === 'done') {
+            document.getElementById('result').innerText = 'Результат: ' + statusData.expression.result;
             clearInterval(intervalId);
           } else {
-            document.getElementById('result').innerText = 'Статус: ' + resData.expression.status;
+            document.getElementById('result').innerText = 'Статус: ' + statusData.expression.status;
           }
         }, 1000);
       } else {
         document.getElementById('result').innerText = 'Ошибка при создании вычисления.';
       }
+    });
+
+    // Выход
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      token = null;
+      document.getElementById('calculator').classList.add('hidden');
+      document.getElementById('auth').classList.remove('hidden');
+      document.getElementById('authMessage').innerText = '';
+      document.getElementById('result').innerText = '';
     });
   </script>
 </body>

@@ -6,7 +6,7 @@
 
 1. **Клонируйте репозиторий**:
     ```bash
-    git clone https://github.com/Andreyka-coder9192/calc_go.git
+    git clone https://github.com/Andreyka-coder9192/calc_goV3.git
     cd calc_go
     ```
 
@@ -18,18 +18,20 @@
     - **Linux/macOS**: [Официальная инструкция](https://go.dev/doc/install)
     - **Windows**: [Скачайте установщик](https://go.dev/dl/)
 
+1. **Установите Docker и Docker Compose (опционально для контейнеризации).**
 ---
 
 ## Архитектура
 
 ```mermaid
-graph TD
-    U[Пользователь] -->|POST /calculate| O[Оркестратор]
-    U -->|GET /expressions| O
-    O -->|GET /internal/task| A1[Агент 1]
-    O -->|GET /internal/task| A2[Агент 2]
-    A1 -->|POST /internal/task| O
-    A2 -->|POST /internal/task| O
+graph LR
+    U[Пользователь] -->|POST /api/v1/calculate| O[Оркестратор (HTTP 8080)]
+    U -->|GET /api/v1/expressions| O
+    O -->|gRPC GetTask| A1[Агент 1]
+    O -->|gRPC GetTask| A2[Агент 2]
+    A1 -->|gRPC PostResult| O
+    A2 -->|gRPC PostResult| O
+    O -->|GET /api/v1/expressions/{id}| U
 ```
 
 **Оркестратор** (порт 8080 по умолчанию):

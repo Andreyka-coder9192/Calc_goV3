@@ -3,7 +3,40 @@
 Система для параллельного вычисления сложных арифметических выражений с использованием оркестратора и агентов-вычислителей.
 
 ## Установка и настройка
+## Примеры сценариев
 
+### Вычисление сложного выражения
+```bash
+curl -X POST http://localhost:8080/api/v1/calculate \
+  -H "Content-Type: application/json" \
+  -d '{"expression": "((3+5)*2-8)/4"}'
+
+# Через 1.5 секунды:
+curl http://localhost:8080/api/v1/expressions/1
+# Ответ: {"status":"completed","result":2}
+```
+
+### Обработка ошибки
+```bash
+curl -X POST http://localhost:8080/api/v1/calculate \
+  -d '{"expression": "10/(5-5)"}'
+
+# Результат:
+{
+    "id": "2",
+    "status": "error",
+    "result": null
+}
+```
+
+## Тестирование
+```bash
+# Запуск интеграционных тестов
+go test -v ./tests/...
+
+# Запуск нагрузочного теста
+wrk -t4 -c100 -d30s http://localhost:8080/api/v1/expressions
+```
 1. **Клонируйте репозиторий**:
     ```bash
     git clone https://github.com/Andreyka-coder9192/calc_goV3.git
@@ -18,7 +51,7 @@
     - **Linux/macOS**: [Официальная инструкция](https://go.dev/doc/install)
     - **Windows**: [Скачайте установщик](https://go.dev/dl/)
 
-1. **Установите Docker и Docker Compose (опционально для контейнеризации).**
+3. **Установите Docker и Docker Compose (опционально для контейнеризации).**
 ---
 
 ## Архитектура
@@ -38,15 +71,17 @@ graph LR
 
 - Принимает выражения через REST API
 - Разбивает выражения на атомарные задачи
-- Управляет очередью задач
-- Собирает результаты
+- Управляет очередью задач через gRPC
+- Собирает результаты через gRPC
 - Хранит статусы вычислений
 
 **Агенты**:
 
-- Получают задачи через HTTP-запросы
+- Подключаются к оркестратору через gRPC
+- Получают задачи через `GetTask` (gRPC)
 - Выполняют арифметические операции с задержкой
-- Возвращают результаты через API
+- Возвращают результаты через `PostResult` (gRPC)
+- Поддерживают параллельное выполнение задач
 
 ## Требования
 
@@ -98,108 +133,27 @@ go run .\cmd\orchestrator\main.go
 ## 2. Запуск агента
 
 ### Linux / macOS (bash)
-~~~bash
-# Указание вычислительной мощности (количество горутин) и URL оркестратора
+```bash
+# Указание вычислительной мощности и адреса оркестратора
 export COMPUTING_POWER=4
-export ORCHESTRATOR_URL=http://localhost:8080
+export ORCHESTRATOR_ADDR=localhost:50051  # gRPC порт
 
 # Запуск агента
 go run ./cmd/agent/main.go
-~~~
-
-### Windows (cmd.exe)
-~~~bat
-:: Указание вычислительной мощности (количество горутин) и URL оркестратора
-set COMPUTING_POWER=4
-set ORCHESTRATOR_URL=http://localhost:8080
-
-:: Запуск агента
-go run .\cmd\agent\main.go
-~~~
+```
 
 ### Windows (PowerShell)
-~~~powershell
-# Указание вычислительной мощности (количество горутин) и URL оркестратора
+```powershell
+# Настройка параметров
 $env:COMPUTING_POWER = "4"
-$env:ORCHESTRATOR_URL = "http://localhost:8080"
+$env:ORCHESTRATOR_ADDR = "localhost:50051"
 
 # Запуск агента
 go run .\cmd\agent\main.go
-~~~
+```
+
 
 ## Дополнительно: Запуск в Docker
-
-### Dockerfile для оркестратора (Dockerfile.orchestrator)
-~~~dockerfile
-FROM golang:1.20-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go build -o orchestrator ./cmd/orchestrator
-
-FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/orchestrator .
-ENV TIME_ADDITION_MS=200 \
-    TIME_SUBTRACTION_MS=200 \
-    TIME_MULTIPLICATIONS_MS=300 \
-    TIME_DIVISIONS_MS=400
-EXPOSE 8080
-ENTRYPOINT ["./orchestrator"]
-~~~
-
-### Dockerfile для агента (Dockerfile.agent)
-~~~dockerfile
-FROM golang:1.20-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go build -o agent ./cmd/agent
-
-FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/agent .
-ENV COMPUTING_POWER=4 \
-    ORCHESTRATOR_URL=http://orchestrator:8080
-ENTRYPOINT ["./agent"]
-~~~
-
-### docker-compose.yml
-~~~yaml
-version: "3.8"
-services:
-  orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile.orchestrator
-    ports:
-      - "8080:8080"
-    environment:
-      - TIME_ADDITION_MS=200
-      - TIME_SUBTRACTION_MS=200
-      - TIME_MULTIPLICATIONS_MS=300
-      - TIME_DIVISIONS_MS=400
-  agent:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    depends_on:
-      - orchestrator
-    environment:
-      - COMPUTING_POWER=4
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-~~~
-
-### .dockerignore
-~~~bash
-.git
-node_modules
-*.log
-bin/
-vendor/
-~~~
 
 Запуск через Docker Compose:
 ~~~bash
@@ -216,40 +170,30 @@ docker-compose up --build
 
 После ввода выражения и нажатия "Вычислить" запрос отправится на API (http://localhost:8080/api/v1/calculate).
 
-## API Endpoints
+## API Endpoints (REST)
 
 ### 1. Добавление выражения
-
 ```bash
 POST /api/v1/calculate
+Content-Type: application/json
+
+{"expression": "(2+3)*4-10/2"}
 ```
 
-Пример запроса:
-
-```bash
-curl --location 'http://localhost:8080/api/v1/calculate' \
---header 'Content-Type: application/json' \
---data '{
-  "expression": "(2+3)*4-10/2"
-}'
-```
-
-Успешный ответ (201):
-
+Ответ:
 ```json
 {
-    "id": "1"
+    "id": "1",
+    "status": "pending"
 }
 ```
 
 ### 2. Получение списка выражений
-
 ```bash
 GET /api/v1/expressions
 ```
 
-Пример ответа (200):
-
+Ответ:
 ```json
 {
     "expressions": [
@@ -258,38 +202,22 @@ GET /api/v1/expressions
             "expression": "(2+3)*4-10/2",
             "status": "completed",
             "result": 15
-        },
-        {
-            "id": "2",
-            "expression": "8/(4-4)",
-            "status": "error",
-            "result": null
         }
     ]
 }
 ```
 
-### 3. Получение выражения по ID
-
+### 3. Получение статуса по ID
 ```bash
-GET /api/v1/expressions/{id}
+GET /api/v1/expressions/1
 ```
 
-Пример запроса:
-
-```bash
-curl http://localhost:8080/api/v1/expressions/1
-```
-
-Ответ (200):
-
+Ответ:
 ```json
 {
-    "expression": {
-        "id": "1",
-        "status": "completed",
-        "result": 15
-    }
+    "id": "1",
+    "status": "completed",
+    "result": 15
 }
 ```
 
@@ -347,44 +275,32 @@ POST /internal/task
 
 ## Примеры сценариев
 
-### Сценарий 1: Успешное вычисление
-
+### Вычисление сложного выражения
 ```bash
-# Отправка выражения
-curl --location 'http://localhost:8080/api/v1/calculate' \
---data '{"expression": "2+2*2"}'
+curl -X POST http://localhost:8080/api/v1/calculate \
+  -H "Content-Type: application/json" \
+  -d '{"expression": "((3+5)*2-8)/4"}'
 
-# Проверка статуса
+# Через 1.5 секунды:
 curl http://localhost:8080/api/v1/expressions/1
-
-# Ответ через 500 мс:
-{
-    "expression": {
-        "id": "1",
-        "status": "completed",
-        "result": 6
-    }
-}
+# Ответ: {"status":"completed","result":2}
 ```
 
-### Сценарий 2: Ошибка деления на ноль
-
+### Обработка ошибки
 ```bash
-curl --location 'http://localhost:8080/api/v1/calculate' \
---data '{"expression": "10/(5-5)"}'
+curl -X POST http://localhost:8080/api/v1/calculate \
+  -d '{"expression": "10/(5-5)"}'
 
-# Ответ:
+# Результат:
 {
-    "expression": {
-        "id": "2",
-        "status": "error",
-        "result": null
-    }
+    "id": "2",
+    "status": "error",
+    "result": null
 }
 ```
 
 ## Тестирование
-
 ```bash
-go test .\tests\
+# Запуск интеграционных тестов
+go test -v ./tests/...
 ```

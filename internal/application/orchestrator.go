@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   arg2 REAL,
   operation TEXT,
   operation_time INTEGER,
+  in_progress BOOLEAN NOT NULL DEFAULT 0,
   done BOOLEAN NOT NULL DEFAULT 0,
   UNIQUE(expr_id, arg1, arg2, operation),
   FOREIGN KEY(expr_id) REFERENCES expressions(id)
@@ -251,8 +252,10 @@ func (o *Orchestrator) expressionByIDHandler(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{"expression": expr})
 }
 
-// GetTask for gRPC
 func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskResp, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	var t struct {
 		ID            string  `db:"id"`
 		Arg1          float64 `db:"arg1"`
@@ -263,12 +266,16 @@ func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskRe
 	err := o.db.Get(&t, `
         SELECT id, arg1, arg2, operation, operation_time
           FROM tasks
-         WHERE done = 0
+         WHERE in_progress = 0 AND done = 0
          LIMIT 1
     `)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "no task")
 	}
+	if _, err := o.db.Exec("UPDATE tasks SET in_progress = 1 WHERE id = ?", t.ID); err != nil {
+		log.Printf("failed to mark task %s in progress: %v", t.ID, err)
+	}
+
 	return &calc.TaskResp{
 		Id:            t.ID,
 		Arg1:          t.Arg1,
@@ -279,30 +286,45 @@ func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskRe
 }
 
 func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*calc.Empty, error) {
+	if _, err := o.db.Exec(
+		"UPDATE tasks SET done = 1, in_progress = 0 WHERE id = ?",
+		in.Id,
+	); err != nil {
+		return nil, status.Error(codes.Internal, "failed to update task")
+	}
+
 	var exprID int64
 	if err := o.db.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", in.Id); err != nil {
 		return nil, status.Error(codes.NotFound, "task not found")
-	}
-
-	if _, err := o.db.Exec("UPDATE tasks SET done = 1 WHERE id = ?", in.Id); err != nil {
-		return nil, status.Error(codes.Internal, "failed to update task")
 	}
 
 	var fullExpr string
 	if err := o.db.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID); err == nil {
 		if ast, err := ParseAST(fullExpr); err == nil {
 			o.schedulePendingTasksDB(exprID, ast)
+		} else {
+			log.Printf("PostResult: failed to rebuild AST for expr %d: %v", exprID, err)
 		}
+	} else {
+		log.Printf("PostResult: failed to load expr %d: %v", exprID, err)
 	}
 
 	var remaining int
 	if err := o.db.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID); err != nil {
-		return nil, status.Error(codes.Internal, "failed to count tasks")
+		return nil, status.Error(codes.Internal, "failed to count remaining tasks")
 	}
 
 	if remaining == 0 {
-		if result, err := calculation.Calc(fullExpr); err == nil {
-			o.db.Exec("UPDATE expressions SET status = ?, result = ? WHERE id = ?", "done", result, exprID)
+		result, err := calculation.Calc(fullExpr)
+		if err != nil {
+			log.Printf("PostResult: Calc error for expr %d: %v", exprID, err)
+		} else {
+			if _, err := o.db.Exec(
+				"UPDATE expressions SET status = ?, result = ? WHERE id = ?",
+				"done", result, exprID,
+			); err != nil {
+				log.Printf("PostResult: failed to update expression %d: %v", exprID, err)
+			}
 		}
 	}
 

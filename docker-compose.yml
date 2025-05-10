@@ -18,7 +18,7 @@ services:
       - orchestrator
     environment:
       - COMPUTING_POWER=4
-      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - ORCHESTRATOR_URL=http://orchestrator:9090
   web:
     build:
       context: .

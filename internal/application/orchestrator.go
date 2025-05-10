@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Config holds server configuration values
 type Config struct {
 	Addr                string
 	TimeAddition        int
@@ -29,7 +28,6 @@ type Config struct {
 	TimeDivisions       int
 }
 
-// ConfigFromEnv reads config from environment
 func ConfigFromEnv() *Config {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -60,24 +58,20 @@ func ConfigFromEnv() *Config {
 	}
 }
 
-// Orchestrator implements both HTTP and gRPC servers
 type Orchestrator struct {
 	calc.UnimplementedCalcServer
-	Config *Config
-	db     *sqlx.DB
-	mu     sync.Mutex
-	// AST in-memory store for scheduling
+	Config      *Config
+	db          *sqlx.DB
+	mu          sync.Mutex
 	exprCounter int64
 	taskCounter int64
 }
 
-// NewOrchestrator initializes DB and returns orchestrator
 func NewOrchestrator() *Orchestrator {
 	db, err := sqlx.Connect("sqlite3", "calcgo.db")
 	if err != nil {
 		log.Fatal("cannot connect to db:", err)
 	}
-	// migrate
 	schema := `
 CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +104,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 	return &Orchestrator{Config: ConfigFromEnv(), db: db}
 }
 
-// RegisterHandler handles POST /api/v1/register
 func (o *Orchestrator) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Login, Password string }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -129,7 +122,6 @@ func (o *Orchestrator) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// LoginHandler handles POST /api/v1/login
 func (o *Orchestrator) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Login, Password string }
 	json.NewDecoder(r.Body).Decode(&req)
@@ -145,7 +137,6 @@ func (o *Orchestrator) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid creds", http.StatusUnauthorized)
 		return
 	}
-	// get user id
 	o.db.Get(&id, "SELECT id FROM users WHERE login=?", req.Login)
 	tok, err := CreateToken(id)
 	if err != nil {
@@ -156,7 +147,6 @@ func (o *Orchestrator) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"token": tok})
 }
 
-// CalculateHandler creates expression + tasks
 func (o *Orchestrator) CalculateHandler(w http.ResponseWriter, r *http.Request) {
 	uid := r.Context().Value("user_id").(int)
 	var req struct{ Expression string }
@@ -166,27 +156,21 @@ func (o *Orchestrator) CalculateHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	// insert expression
 	res := o.db.MustExec("INSERT INTO expressions(user_id,expr,status) VALUES(?,?,?)", uid, req.Expression, "pending")
 	exprID, _ := res.LastInsertId()
-	// schedule tasks
 	o.scheduleTasksDB(exprID, ast)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]int64{"id": exprID})
 }
 
-// schedulePendingTasksDB — находит в AST узлы, готовые к выполнению, и вставляет их в БД
 func (o *Orchestrator) schedulePendingTasksDB(exprID int64, root *ASTNode) {
-	// Рекурсивно обходим все узлы
 	if root == nil || root.IsLeaf {
 		return
 	}
-	// Сначала поймать дочерние
 	o.schedulePendingTasksDB(exprID, root.Left)
 	o.schedulePendingTasksDB(exprID, root.Right)
 
-	// Если оба ребёнка листы И задача по этому узлу ещё не создана
 	if root.Left.IsLeaf && root.Right.IsLeaf && !root.TaskScheduled {
 		n := strconv.FormatInt(time.Now().UnixNano(), 10)
 		opTime := 0
@@ -200,7 +184,6 @@ func (o *Orchestrator) schedulePendingTasksDB(exprID int64, root *ASTNode) {
 		case "/":
 			opTime = o.Config.TimeDivisions
 		}
-		// Добавляем новую задачу
 		o.db.Exec(
 			`INSERT OR IGNORE INTO tasks
              (id, expr_id, arg1, arg2, operation, operation_time)
@@ -211,7 +194,6 @@ func (o *Orchestrator) schedulePendingTasksDB(exprID int64, root *ASTNode) {
 	}
 }
 
-// scheduleTasksDB walks AST, inserts tasks into DB when both children leaf
 func (o *Orchestrator) scheduleTasksDB(exprID int64, node *ASTNode) {
 	if node == nil || node.IsLeaf {
 		return
@@ -239,7 +221,6 @@ func (o *Orchestrator) scheduleTasksDB(exprID int64, node *ASTNode) {
 	}
 }
 
-// expressionsHandler GET /api/v1/expressions
 func (o *Orchestrator) expressionsHandler(w http.ResponseWriter, r *http.Request) {
 	uid := r.Context().Value("user_id").(int)
 	var exprs []struct {
@@ -253,7 +234,6 @@ func (o *Orchestrator) expressionsHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{"expressions": exprs})
 }
 
-// expressionByIDHandler GET /api/v1/expressions/{id}
 func (o *Orchestrator) expressionByIDHandler(w http.ResponseWriter, r *http.Request) {
 	uid := r.Context().Value("user_id").(int)
 	id, _ := strconv.Atoi(r.URL.Path[len("/api/v1/expressions/"):])
@@ -274,44 +254,12 @@ func (o *Orchestrator) expressionByIDHandler(w http.ResponseWriter, r *http.Requ
 // GetTask for gRPC
 func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskResp, error) {
 	var t struct {
-		ID            string `db:"id"`
-		Arg1          float64
-		Arg2          float64
-		Operation     string
-		OperationTime int `db:"operation_time"`
+		ID            string  `db:"id"`
+		Arg1          float64 `db:"arg1"`
+		Arg2          float64 `db:"arg2"`
+		Operation     string  `db:"operation"`
+		OperationTime int     `db:"operation_time"`
 	}
-	err := o.db.Get(&t, "SELECT id,arg1,arg2,operation,operation_time FROM tasks WHERE done=0 LIMIT 1")
-	if err != nil {
-		return nil, status.Error(codes.NotFound, "no task")
-	}
-	return &calc.TaskResp{Id: t.ID, Arg1: t.Arg1, Arg2: t.Arg2, Operation: t.Operation, OperationTime: int32(t.OperationTime)}, nil
-}
-
-// PostResult for gRPC
-func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*calc.Empty, error) {
-	// mark done
-	o.db.Exec("UPDATE tasks SET done=1 WHERE id=?", in.Id)
-	// TODO: update AST node and possibly expression result and new tasks
-	return &calc.Empty{}, nil
-}
-
-// отдаём первую незавершённую задачу
-func (o *Orchestrator) InternalGetTask(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "only GET allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Структура точно соответствует JSON, который ждёт агент
-	var t struct {
-		ID            string  `db:"id" json:"id"`
-		Arg1          float64 `db:"arg1" json:"arg1"`
-		Arg2          float64 `db:"arg2" json:"arg2"`
-		Operation     string  `db:"operation" json:"operation"`
-		OperationTime int     `db:"operation_time" json:"operation_time"`
-	}
-
-	// Забираем одну незавершённую задачу
 	err := o.db.Get(&t, `
         SELECT id, arg1, arg2, operation, operation_time
           FROM tasks
@@ -319,61 +267,48 @@ func (o *Orchestrator) InternalGetTask(w http.ResponseWriter, r *http.Request) {
          LIMIT 1
     `)
 	if err != nil {
-		http.NotFound(w, r)
-		return
+		return nil, status.Error(codes.NotFound, "no task")
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	// Оборачиваем в ключ "task", как ждёт агент
-	json.NewEncoder(w).Encode(map[string]interface{}{"task": t})
+	return &calc.TaskResp{
+		Id:            t.ID,
+		Arg1:          t.Arg1,
+		Arg2:          t.Arg2,
+		Operation:     t.Operation,
+		OperationTime: int32(t.OperationTime),
+	}, nil
 }
 
-func (o *Orchestrator) InternalPostTask(w http.ResponseWriter, r *http.Request) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if r.Method != http.MethodPost {
-		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var payload struct {
-		ID     string  `json:"id"`
-		Result float64 `json:"result"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "bad payload", http.StatusBadRequest)
-		return
-	}
-
+func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*calc.Empty, error) {
 	var exprID int64
-	if err := o.db.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", payload.ID); err != nil {
-		http.Error(w, "task not found", http.StatusNotFound)
-		return
+	if err := o.db.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", in.Id); err != nil {
+		return nil, status.Error(codes.NotFound, "task not found")
 	}
-	if _, err := o.db.Exec("UPDATE tasks SET done = 1 WHERE id = ?", payload.ID); err != nil {
-		http.Error(w, "update task failed", http.StatusInternalServerError)
-		return
+
+	if _, err := o.db.Exec("UPDATE tasks SET done = 1 WHERE id = ?", in.Id); err != nil {
+		return nil, status.Error(codes.Internal, "failed to update task")
 	}
 
 	var fullExpr string
-	_ = o.db.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID)
-
-	ast, _ := ParseAST(fullExpr)
-	o.schedulePendingTasksDB(exprID, ast)
-
-	var remaining int
-	_ = o.db.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID)
-
-	if remaining == 0 {
-		result, _ := calculation.Calc(fullExpr)
-		o.db.Exec("UPDATE expressions SET status = ?, result = ? WHERE id = ?", "done", result, exprID)
+	if err := o.db.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID); err == nil {
+		if ast, err := ParseAST(fullExpr); err == nil {
+			o.schedulePendingTasksDB(exprID, ast)
+		}
 	}
 
-	w.WriteHeader(http.StatusOK)
+	var remaining int
+	if err := o.db.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID); err != nil {
+		return nil, status.Error(codes.Internal, "failed to count tasks")
+	}
+
+	if remaining == 0 {
+		if result, err := calculation.Calc(fullExpr); err == nil {
+			o.db.Exec("UPDATE expressions SET status = ?, result = ? WHERE id = ?", "done", result, exprID)
+		}
+	}
+
+	return &calc.Empty{}, nil
 }
 
-// RunServer starts HTTP and gRPC
 func (o *Orchestrator) RunServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/register", o.RegisterHandler)
@@ -381,17 +316,6 @@ func (o *Orchestrator) RunServer() error {
 	mux.Handle("/api/v1/calculate", o.AuthMiddleware(http.HandlerFunc(o.CalculateHandler)))
 	mux.Handle("/api/v1/expressions", o.AuthMiddleware(http.HandlerFunc(o.expressionsHandler)))
 	mux.Handle("/api/v1/expressions/", o.AuthMiddleware(http.HandlerFunc(o.expressionByIDHandler)))
-
-	mux.HandleFunc("/internal/task", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			o.InternalGetTask(w, r)
-		case http.MethodPost:
-			o.InternalPostTask(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
 
 	httpSrv := &http.Server{Addr: ":" + o.Config.Addr, Handler: cors.Default().Handler(mux)}
 	go func() {
@@ -401,7 +325,6 @@ func (o *Orchestrator) RunServer() error {
 		}
 	}()
 
-	// gRPC
 	lis, err := net.Listen("tcp", ":9090")
 	if err != nil {
 		return err

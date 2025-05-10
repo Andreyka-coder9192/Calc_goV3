@@ -34,7 +34,6 @@ func NewAgent() *Agent {
 	conn, err := grpc.Dial(
 		target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
 		log.Fatalf("agent: cannot connect to gRPC: %v", err)

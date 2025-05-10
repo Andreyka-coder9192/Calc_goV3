@@ -329,6 +329,9 @@ func (o *Orchestrator) InternalGetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (o *Orchestrator) InternalPostTask(w http.ResponseWriter, r *http.Request) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
 		return
@@ -343,29 +346,25 @@ func (o *Orchestrator) InternalPostTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 1. Узнаём exprID
 	var exprID int64
 	if err := o.db.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", payload.ID); err != nil {
 		http.Error(w, "task not found", http.StatusNotFound)
 		return
 	}
-	// 2. Обновляем done=1
 	if _, err := o.db.Exec("UPDATE tasks SET done = 1 WHERE id = ?", payload.ID); err != nil {
 		http.Error(w, "update task failed", http.StatusInternalServerError)
 		return
 	}
 
-	// 3. Планируем только новые задачи для родительских узлов
 	var fullExpr string
 	_ = o.db.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID)
-	ast, _ := ParseAST(fullExpr)
-	o.schedulePendingTasksDB(exprID, ast) // с UNIQUE на уровне БД дубликаты не создадутся
 
-	// 4. Проверяем оставшиеся задачи
+	ast, _ := ParseAST(fullExpr)
+	o.schedulePendingTasksDB(exprID, ast)
+
 	var remaining int
 	_ = o.db.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID)
 
-	// 5. Если больше нет — финальный расчёт
 	if remaining == 0 {
 		result, _ := calculation.Calc(fullExpr)
 		o.db.Exec("UPDATE expressions SET status = ?, result = ? WHERE id = ?", "done", result, exprID)

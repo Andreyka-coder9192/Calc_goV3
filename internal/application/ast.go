@@ -162,5 +162,8 @@ func EvalAST(node *ASTNode) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if node.Operator == "/" && right == 0 {
+		return 0, fmt.Errorf("division by zero")
+	}
 	return calculation.Compute(node.Operator, left, right)
 }

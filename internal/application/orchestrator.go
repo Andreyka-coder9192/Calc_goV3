@@ -155,6 +155,10 @@ func (o *Orchestrator) CalculateHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if _, err := EvalAST(ast); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	res := o.db.MustExec("INSERT INTO expressions(user_id,expr,status) VALUES(?,?,?)", uid, req.Expression, "pending")
 	exprID, _ := res.LastInsertId()
 	o.scheduleTasksDB(exprID, ast)
@@ -339,7 +343,6 @@ func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*cal
 }
 
 func (o *Orchestrator) RunServer() error {
-	// создаём HTTP-мультиплексор
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/register", o.RegisterHandler)
 	mux.HandleFunc("/api/v1/login", o.LoginHandler)
@@ -347,10 +350,8 @@ func (o *Orchestrator) RunServer() error {
 	mux.Handle("/api/v1/expressions", o.AuthMiddleware(http.HandlerFunc(o.expressionsHandler)))
 	mux.Handle("/api/v1/expressions/", o.AuthMiddleware(http.HandlerFunc(o.expressionByIDHandler)))
 
-	// оборачиваем mux в ваше EnableCORS
 	handlerWithCORS := EnableCORS(mux)
 
-	// запускаем HTTP-сервер
 	httpSrv := &http.Server{
 		Addr:    ":" + o.Config.Addr,
 		Handler: handlerWithCORS,
@@ -362,7 +363,6 @@ func (o *Orchestrator) RunServer() error {
 		}
 	}()
 
-	// запускаем gRPC-сервер
 	lis, err := net.Listen("tcp", ":9090")
 	if err != nil {
 		return err

@@ -16,11 +16,31 @@ func setupOrchestrator(t *testing.T) (*Orchestrator, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Миграция schema
 	schema := `
-    CREATE TABLE expressions (id INTEGER PRIMARY KEY, user_id INTEGER, expr TEXT, status TEXT, result REAL);
-    CREATE TABLE tasks (id TEXT PRIMARY KEY, expr_id INTEGER, arg1 REAL, arg2 REAL, operation TEXT, operation_time INTEGER, done BOOLEAN);
-    `
+	CREATE TABLE users (
+	  id INTEGER PRIMARY KEY AUTOINCREMENT,
+	  login TEXT UNIQUE NOT NULL,
+	  password_hash TEXT NOT NULL
+	);
+	CREATE TABLE expressions (
+	  id INTEGER PRIMARY KEY AUTOINCREMENT,
+	  user_id INTEGER NOT NULL,
+	  expr TEXT NOT NULL,
+	  status TEXT NOT NULL,
+	  result REAL
+	);
+	CREATE TABLE tasks (
+	  id TEXT PRIMARY KEY,
+	  expr_id INTEGER NOT NULL,
+	  arg1 REAL,
+	  arg2 REAL,
+	  operation TEXT,
+	  operation_time INTEGER,
+	  in_progress BOOLEAN NOT NULL DEFAULT 0,
+	  done BOOLEAN NOT NULL DEFAULT 0,
+	  UNIQUE(expr_id, arg1, arg2, operation)
+	);
+	`
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatal(err)
 	}
@@ -43,12 +63,18 @@ func TestPostResult_FullFlow(t *testing.T) {
 	orch, teardown := setupOrchestrator(t)
 	defer teardown()
 
-	// вставляем Expression и одну задачу
-	res := orch.db.MustExec(`INSERT INTO expressions(user_id,expr,status) VALUES (1, '(1+2)', 'pending')`)
+	// Вставляем выражение и задачу
+	res := orch.db.MustExec(
+		`INSERT INTO expressions(user_id, expr, status) VALUES (1, '(1+2)', 'pending')`,
+	)
 	exprID, _ := res.LastInsertId()
-	orch.db.MustExec(`INSERT INTO tasks(id,expr_id,arg1,arg2,operation,operation_time) VALUES ('task1', ?, 1, 2, '+', 1)`, exprID)
+	orch.db.MustExec(
+		`INSERT INTO tasks(id, expr_id, arg1, arg2, operation, operation_time)
+		 VALUES ('task1', ?, 1, 2, '+', 1)`,
+		exprID,
+	)
 
-	// Получаем таск по gRPC
+	// Получаем задачу
 	taskResp, err := orch.GetTask(context.Background(), &calc.Empty{})
 	if err != nil {
 		t.Fatal(err)
@@ -63,11 +89,15 @@ func TestPostResult_FullFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Проверяем, что expression.status стало done и result == 3
+	// Проверка обновления выражения
 	var statusStr string
 	var resultVal float64
-	orch.db.Get(&statusStr, "SELECT status FROM expressions WHERE id=?", exprID)
-	orch.db.Get(&resultVal, "SELECT result FROM expressions WHERE id=?", exprID)
+	if err := orch.db.Get(&statusStr, "SELECT status FROM expressions WHERE id=?", exprID); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.db.Get(&resultVal, "SELECT result FROM expressions WHERE id=?", exprID); err != nil {
+		t.Fatal(err)
+	}
 	if statusStr != "done" || resultVal != 3 {
 		t.Errorf("expected done/3, got %s/%f", statusStr, resultVal)
 	}

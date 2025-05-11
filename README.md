@@ -43,11 +43,13 @@ graph TD
     ```bash
     # Linux/macOS
     export COMPUTING_POWER=4
-    export ORCHESTRATOR_URL=localhost:8080
+    export ORCHESTRATOR_URL="localhost:8080"
     go run ./cmd/agent/main.go
 
+
     # Windows PowerShell
-    $env:COMPUTING_POWER=4; $env:ORCHESTRATOR_URL=localhost:8080
+    $env:COMPUTING_POWER=4
+    $env:ORCHESTRATOR_URL="localhost:8080"
     go run .\cmd\agent\main.go
     ```
 

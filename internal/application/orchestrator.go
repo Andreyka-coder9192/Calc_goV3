@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -150,15 +151,31 @@ func (o *Orchestrator) CalculateHandler(w http.ResponseWriter, r *http.Request) 
 	uid := r.Context().Value("user_id").(int)
 	var req struct{ Expression string }
 	json.NewDecoder(r.Body).Decode(&req)
+
 	ast, err := ParseAST(req.Expression)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	if _, err := EvalAST(ast); err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+
+	result, err := EvalAST(ast)
+	if err != nil || math.IsInf(result, 0) || math.IsNaN(result) {
+		http.Error(w, "invalid expression or result out of range", http.StatusUnprocessableEntity)
 		return
 	}
+
+	if ast.IsLeaf {
+		res := o.db.MustExec(
+			"INSERT INTO expressions(user_id,expr,status,result) VALUES(?,?,?,?)",
+			uid, req.Expression, "done", result,
+		)
+		id, _ := res.LastInsertId()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]int64{"id": id})
+		return
+	}
+
 	res := o.db.MustExec("INSERT INTO expressions(user_id,expr,status) VALUES(?,?,?)", uid, req.Expression, "pending")
 	exprID, _ := res.LastInsertId()
 	o.scheduleTasksDB(exprID, ast)

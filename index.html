@@ -66,7 +66,7 @@
       e.preventDefault();
       const login = document.getElementById('regLogin').value;
       const pwd   = document.getElementById('regPassword').value;
-      const res   = await fetch(`${API}/register`, {
+      const res = await fetch(`${API}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login, password: pwd })
@@ -82,7 +82,7 @@
       e.preventDefault();
       const login = document.getElementById('loginLogin').value;
       const pwd   = document.getElementById('loginPassword').value;
-      const res   = await fetch(`${API}/login`, {
+      const res = await fetch(`${API}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login, password: pwd })
@@ -122,6 +122,7 @@
           headers: authHeaders()
         });
         const statusData = await statusResp.json();
+        console.log('statusData:', statusData);
 
         if (statusData.expression.status === 'done') {
           document.getElementById('result').innerText = 'Результат: ' + statusData.expression.result;

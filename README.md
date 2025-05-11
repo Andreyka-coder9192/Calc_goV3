@@ -18,7 +18,7 @@ graph TD
 1. **Клонируйте репозиторий**
     ```bash
     git clone https://github.com/Andreyka-coder9192/calc_goV3.git
-    cd calc_go
+    cd calc_goV3
     ```
 2. **Требования**
     - Go 1.20+
@@ -34,7 +34,7 @@ graph TD
     go run ./cmd/orchestrator/main.go
 
     # Windows PowerShell
-    $env:TIME_ADDITION_MS=200; $env:TIME_SUBTRACTION_MS=200; \
+    $env:TIME_ADDITION_MS=200; $env:TIME_SUBTRACTION_MS=200;
     $env:TIME_MULTIPLICATIONS_MS=300; $env:TIME_DIVISIONS_MS=400
     go run .\cmd\orchestrator\main.go
     ```

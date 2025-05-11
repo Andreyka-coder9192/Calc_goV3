@@ -13,7 +13,6 @@ import (
 
 	"github.com/Andreyka-coder9192/calc_go/proto/calc"
 	"github.com/jmoiron/sqlx"
-	"github.com/rs/cors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -338,7 +337,9 @@ func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*cal
 
 	return &calc.Empty{}, nil
 }
+
 func (o *Orchestrator) RunServer() error {
+	// создаём HTTP-мультиплексор
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/register", o.RegisterHandler)
 	mux.HandleFunc("/api/v1/login", o.LoginHandler)
@@ -346,14 +347,22 @@ func (o *Orchestrator) RunServer() error {
 	mux.Handle("/api/v1/expressions", o.AuthMiddleware(http.HandlerFunc(o.expressionsHandler)))
 	mux.Handle("/api/v1/expressions/", o.AuthMiddleware(http.HandlerFunc(o.expressionByIDHandler)))
 
-	httpSrv := &http.Server{Addr: ":" + o.Config.Addr, Handler: cors.Default().Handler(mux)}
+	// оборачиваем mux в ваше EnableCORS
+	handlerWithCORS := EnableCORS(mux)
+
+	// запускаем HTTP-сервер
+	httpSrv := &http.Server{
+		Addr:    ":" + o.Config.Addr,
+		Handler: handlerWithCORS,
+	}
 	go func() {
 		log.Println("HTTP listening on", o.Config.Addr)
-		if err := httpSrv.ListenAndServe(); err != nil {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
 
+	// запускаем gRPC-сервер
 	lis, err := net.Listen("tcp", ":9090")
 	if err != nil {
 		return err
@@ -362,4 +371,19 @@ func (o *Orchestrator) RunServer() error {
 	calc.RegisterCalcServer(grpcSrv, o)
 	log.Println("gRPC listening on 9090")
 	return grpcSrv.Serve(lis)
+}
+
+func EnableCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }

@@ -64,23 +64,33 @@ graph TD
 ---
 
 ## API (REST)
+### POST `/api/v1/register`
 
+Регистрация нового пользователя.
+
+**Пример запроса**:
+```http
+POST /api/v1/register HTTP/1.1
+Content-Type: application/json
+
+{
+    "login": "user1",
+    "password": "securepass"
+}
+```
 ### POST `/api/v1/calculate`
 Запускает вычисление выражения.
-
 - **Запрос**
     ```http
     POST /api/v1/calculate HTTP/1.1
     Content-Type: application/json
     Authorization: Bearer <token>
-
     {"expression":"(2+3)*4-10/2"}
     ```
 - **Ответ** (HTTP 201)
     ```json
     {"id": 1}
     ```
-
 ### GET `/api/v1/expressions`
 Возвращает все выражения пользователя.
 

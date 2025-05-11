@@ -3,6 +3,7 @@
 CalcGo — распределённый вычислитель арифметических выражений с параллельной обработкой через оркестратора и агентов.
 
 ## Архитектура
+```mermaid
 graph TD
   Client[Клиент] -->|HTTP| Orchestrator[Оркестратор]
   Orchestrator -->|gRPC| Agent1[Агент 1]
@@ -10,6 +11,7 @@ graph TD
   Agent1 -->|gRPC| Orchestrator
   Agent2 -->|gRPC| Orchestrator
   Orchestrator -->|HTTP| Client
+```
 
 ## Установка и запуск
 

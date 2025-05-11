@@ -48,10 +48,12 @@
   </div>
 
   <script>
-    const API = 'http://orchestrator:8080/api/v1/calculate';
+    // Базовый URL API (регистрация, логин, вычисление, статусы)
+    const API = 'http://localhost:8080/api/v1';
+
     let token = null;
 
-    // Функция для установки заголовка авторизации
+    // Заголовки с токеном авторизации
     function authHeaders() {
       return {
         'Content-Type': 'application/json',
@@ -63,25 +65,24 @@
     document.getElementById('registerForm').addEventListener('submit', async e => {
       e.preventDefault();
       const login = document.getElementById('regLogin').value;
-      const pwd = document.getElementById('regPassword').value;
-      const res = await fetch(API + '/register', {
+      const pwd   = document.getElementById('regPassword').value;
+      const res   = await fetch(`${API}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login, password: pwd })
       });
-      if (res.ok) {
-        document.getElementById('authMessage').innerText = 'Успешная регистрация, теперь войдите.';
-      } else {
-        document.getElementById('authMessage').innerText = 'Ошибка регистрации.';
-      }
+      document.getElementById('authMessage').innerText =
+        res.ok
+          ? 'Успешная регистрация, теперь войдите.'
+          : 'Ошибка регистрации.';
     });
 
     // Логин
     document.getElementById('loginForm').addEventListener('submit', async e => {
       e.preventDefault();
       const login = document.getElementById('loginLogin').value;
-      const pwd = document.getElementById('loginPassword').value;
-      const res = await fetch(API + '/login', {
+      const pwd   = document.getElementById('loginPassword').value;
+      const res   = await fetch(`${API}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login, password: pwd })
@@ -96,35 +97,39 @@
       }
     });
 
-    // Калькулятор
+    // Вычисление выражения
     document.getElementById('calcForm').addEventListener('submit', async e => {
       e.preventDefault();
       const expr = document.getElementById('expression').value;
       document.getElementById('result').innerText = 'Отправка запроса...';
 
-      const resp = await fetch(API + '/calculate', {
+      // POST /calculate
+      const resp = await fetch(`${API}/calculate`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ expression: expr })
       });
       const data = await resp.json();
-      if (data.id) {
-        const exprId = data.id;
-        const intervalId = setInterval(async () => {
-          const statusResp = await fetch(`http://localhost:8080/api/v1/expressions/${exprId}`, {
-            headers: authHeaders()
-          });
-          const statusData = await statusResp.json();
-          if (statusData.expression.status === 'done') {
-            document.getElementById('result').innerText = 'Результат: ' + statusData.expression.result;
-            clearInterval(intervalId);
-          } else {
-            document.getElementById('result').innerText = 'Статус: ' + statusData.expression.status;
-          }
-        }, 1000);
-      } else {
+      if (!data.id) {
         document.getElementById('result').innerText = 'Ошибка при создании вычисления.';
+        return;
       }
+
+      // Периодически проверяем статус
+      const exprId = data.id;
+      const intervalId = setInterval(async () => {
+        const statusResp = await fetch(`${API}/expressions/${exprId}`, {
+          headers: authHeaders()
+        });
+        const statusData = await statusResp.json();
+
+        if (statusData.expression.status === 'done') {
+          document.getElementById('result').innerText = 'Результат: ' + statusData.expression.result;
+          clearInterval(intervalId);
+        } else {
+          document.getElementById('result').innerText = 'Статус: ' + statusData.expression.status;
+        }
+      }, 1000);
     });
 
     // Выход
@@ -133,7 +138,7 @@
       document.getElementById('calculator').classList.add('hidden');
       document.getElementById('auth').classList.remove('hidden');
       document.getElementById('authMessage').innerText = '';
-      document.getElementById('result').innerText = '';
+      document.getElementById('result').innerText      = '';
     });
   </script>
 </body>

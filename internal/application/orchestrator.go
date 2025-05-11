@@ -60,7 +60,7 @@ func ConfigFromEnv() *Config {
 type Orchestrator struct {
 	calc.UnimplementedCalcServer
 	Config      *Config
-	db          *sqlx.DB
+	DB          *sqlx.DB
 	mu          sync.Mutex
 	exprCounter int64
 	taskCounter int64
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatal("migrate failed:", err)
 	}
-	return &Orchestrator{Config: ConfigFromEnv(), db: db}
+	return &Orchestrator{Config: ConfigFromEnv(), DB: db}
 }
 
 func (o *Orchestrator) RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +115,7 @@ func (o *Orchestrator) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	}
-	if _, err := o.db.Exec("INSERT INTO users(login,password_hash) VALUES(?,?)", req.Login, hash); err != nil {
+	if _, err := o.DB.Exec("INSERT INTO users(login,password_hash) VALUES(?,?)", req.Login, hash); err != nil {
 		http.Error(w, "user exists", http.StatusConflict)
 		return
 	}
@@ -127,7 +127,7 @@ func (o *Orchestrator) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 	var id int
 	var hash string
-	err := o.db.Get(&hash, "SELECT password_hash FROM users WHERE login=?", req.Login)
+	err := o.DB.Get(&hash, "SELECT password_hash FROM users WHERE login=?", req.Login)
 	if err != nil {
 		http.Error(w, "invalid creds", http.StatusUnauthorized)
 		return
@@ -137,7 +137,7 @@ func (o *Orchestrator) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid creds", http.StatusUnauthorized)
 		return
 	}
-	o.db.Get(&id, "SELECT id FROM users WHERE login=?", req.Login)
+	o.DB.Get(&id, "SELECT id FROM users WHERE login=?", req.Login)
 	tok, err := CreateToken(id)
 	if err != nil {
 		http.Error(w, "server error", http.StatusInternalServerError)
@@ -165,7 +165,7 @@ func (o *Orchestrator) CalculateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if ast.IsLeaf {
-		res := o.db.MustExec(
+		res := o.DB.MustExec(
 			"INSERT INTO expressions(user_id,expr,status,result) VALUES(?,?,?,?)",
 			uid, req.Expression, "done", result,
 		)
@@ -176,7 +176,7 @@ func (o *Orchestrator) CalculateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	res := o.db.MustExec("INSERT INTO expressions(user_id,expr,status) VALUES(?,?,?)", uid, req.Expression, "pending")
+	res := o.DB.MustExec("INSERT INTO expressions(user_id,expr,status) VALUES(?,?,?)", uid, req.Expression, "pending")
 	exprID, _ := res.LastInsertId()
 	o.scheduleTasksDB(exprID, ast)
 	w.Header().Set("Content-Type", "application/json")
@@ -204,7 +204,7 @@ func (o *Orchestrator) schedulePendingTasksDB(exprID int64, root *ASTNode) {
 		case "/":
 			opTime = o.Config.TimeDivisions
 		}
-		o.db.Exec(
+		o.DB.Exec(
 			`INSERT OR IGNORE INTO tasks
              (id, expr_id, arg1, arg2, operation, operation_time)
              VALUES (?, ?, ?, ?, ?, ?)`,
@@ -233,7 +233,7 @@ func (o *Orchestrator) scheduleTasksDB(exprID int64, node *ASTNode) {
 		case "/":
 			opTime = o.Config.TimeDivisions
 		}
-		o.db.MustExec(
+		o.DB.MustExec(
 			"INSERT INTO tasks(id,expr_id,arg1,arg2,operation,operation_time) VALUES(?,?,?,?,?,?)",
 			n, exprID, node.Left.Value, node.Right.Value, node.Operator, opTime,
 		)
@@ -249,7 +249,7 @@ func (o *Orchestrator) expressionsHandler(w http.ResponseWriter, r *http.Request
 		Status string   `db:"status" json:"status"`
 		Result *float64 `db:"result" json:"result,omitempty"`
 	}
-	o.db.Select(&exprs, "SELECT id,expr,status,result FROM expressions WHERE user_id=?", uid)
+	o.DB.Select(&exprs, "SELECT id,expr,status,result FROM expressions WHERE user_id=?", uid)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"expressions": exprs})
 }
@@ -262,7 +262,7 @@ func (o *Orchestrator) expressionByIDHandler(w http.ResponseWriter, r *http.Requ
 		Status string   `db:"status"`
 		Result *float64 `db:"result"`
 	}
-	err := o.db.Get(&expr, "SELECT id,status,result FROM expressions WHERE user_id=? AND id=?", uid, id)
+	err := o.DB.Get(&expr, "SELECT id,status,result FROM expressions WHERE user_id=? AND id=?", uid, id)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -282,7 +282,7 @@ func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskRe
 		Operation     string  `db:"operation"`
 		OperationTime int     `db:"operation_time"`
 	}
-	err := o.db.Get(&t, `
+	err := o.DB.Get(&t, `
         SELECT id, arg1, arg2, operation, operation_time
           FROM tasks
          WHERE in_progress = 0 AND done = 0
@@ -291,7 +291,7 @@ func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskRe
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "no task")
 	}
-	if _, err := o.db.Exec("UPDATE tasks SET in_progress = 1 WHERE id = ?", t.ID); err != nil {
+	if _, err := o.DB.Exec("UPDATE tasks SET in_progress = 1 WHERE id = ?", t.ID); err != nil {
 		log.Printf("failed to mark task %s in progress: %v", t.ID, err)
 	}
 
@@ -308,18 +308,18 @@ func (o *Orchestrator) GetTask(ctx context.Context, _ *calc.Empty) (*calc.TaskRe
 func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*calc.Empty, error) {
 	// 1. Узнаём, к какому выражению (expr_id) относится эта задача
 	var exprID int64
-	if err := o.db.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", in.Id); err != nil {
+	if err := o.DB.Get(&exprID, "SELECT expr_id FROM tasks WHERE id = ?", in.Id); err != nil {
 		return nil, status.Error(codes.NotFound, "task not found")
 	}
 
 	// 2. Помечаем задачу как выполненную
-	if _, err := o.db.Exec("UPDATE tasks SET done = 1 WHERE id = ?", in.Id); err != nil {
+	if _, err := o.DB.Exec("UPDATE tasks SET done = 1 WHERE id = ?", in.Id); err != nil {
 		return nil, status.Error(codes.Internal, "failed to update task")
 	}
 
 	// 3. Перепланируем вновь доступные подзадачи из AST
 	var fullExpr string
-	if err := o.db.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID); err == nil {
+	if err := o.DB.Get(&fullExpr, "SELECT expr FROM expressions WHERE id = ?", exprID); err == nil {
 		ast, err := ParseAST(fullExpr)
 		if err == nil {
 			o.schedulePendingTasksDB(exprID, ast)
@@ -330,7 +330,7 @@ func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*cal
 
 	// 4. Считаем, остались ли незавершённые задачи
 	var remaining int
-	if err := o.db.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID); err != nil {
+	if err := o.DB.Get(&remaining, "SELECT COUNT(*) FROM tasks WHERE expr_id = ? AND done = 0", exprID); err != nil {
 		return nil, status.Error(codes.Internal, "failed to count tasks")
 	}
 
@@ -346,7 +346,7 @@ func (o *Orchestrator) PostResult(ctx context.Context, in *calc.ResultReq) (*cal
 				log.Printf("PostResult: AST evaluation error: %v", err)
 			} else {
 				// обновляем выражение в БД
-				if _, err := o.db.Exec(
+				if _, err := o.DB.Exec(
 					"UPDATE expressions SET status = ?, result = ? WHERE id = ?",
 					"done", result, exprID,
 				); err != nil {

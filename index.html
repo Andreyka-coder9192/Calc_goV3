@@ -15,7 +15,6 @@
 <body>
   <h1>CalcGo</h1>
 
-  <!-- Блок авторизации -->
   <div id="auth">
     <h2>Вход / Регистрация</h2>
     <form id="registerForm">
@@ -35,7 +34,6 @@
     <div id="authMessage"></div>
   </div>
 
-  <!-- Блок калькулятора -->
   <div id="calculator" class="hidden">
     <h2>Вычислитель</h2>
     <form id="calcForm">
@@ -48,12 +46,9 @@
   </div>
 
   <script>
-    // Базовый URL API (регистрация, логин, вычисление, статусы)
     const API = 'http://localhost:8080/api/v1';
-
     let token = null;
 
-    // Заголовки с токеном авторизации
     function authHeaders() {
       return {
         'Content-Type': 'application/json',
@@ -61,86 +56,122 @@
       };
     }
 
-    // Регистрация
     document.getElementById('registerForm').addEventListener('submit', async e => {
       e.preventDefault();
       const login = document.getElementById('regLogin').value;
-      const pwd   = document.getElementById('regPassword').value;
-      const res = await fetch(`${API}/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ login, password: pwd })
-      });
-      document.getElementById('authMessage').innerText =
-        res.ok
-          ? 'Успешная регистрация, теперь войдите.'
-          : 'Ошибка регистрации.';
+      const pwd = document.getElementById('regPassword').value;
+
+      try {
+        const res = await fetch(`${API}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ login, password: pwd })
+        });
+        document.getElementById('authMessage').innerText =
+          res.ok ? 'Успешная регистрация, теперь войдите.' : 'Ошибка регистрации.';
+      } catch (err) {
+        document.getElementById('authMessage').innerText = 'Сервер не отвечает.';
+      }
     });
 
-    // Логин
     document.getElementById('loginForm').addEventListener('submit', async e => {
       e.preventDefault();
       const login = document.getElementById('loginLogin').value;
-      const pwd   = document.getElementById('loginPassword').value;
-      const res = await fetch(`${API}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ login, password: pwd })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        token = data.token;
-        document.getElementById('auth').classList.add('hidden');
-        document.getElementById('calculator').classList.remove('hidden');
-      } else {
-        document.getElementById('authMessage').innerText = 'Неверные учетные данные.';
+      const pwd = document.getElementById('loginPassword').value;
+
+      try {
+        const res = await fetch(`${API}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ login, password: pwd })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          token = data.token;
+          document.getElementById('auth').classList.add('hidden');
+          document.getElementById('calculator').classList.remove('hidden');
+        } else {
+          document.getElementById('authMessage').innerText = 'Неверные учетные данные.';
+        }
+      } catch (err) {
+        document.getElementById('authMessage').innerText = 'Ошибка сети.';
       }
     });
 
-    // Вычисление выражения
     document.getElementById('calcForm').addEventListener('submit', async e => {
       e.preventDefault();
       const expr = document.getElementById('expression').value;
-      document.getElementById('result').innerText = 'Отправка запроса...';
+      const resultDiv = document.getElementById('result');
+      resultDiv.innerText = 'Отправка запроса...';
 
-      // POST /calculate
-      const resp = await fetch(`${API}/calculate`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ expression: expr })
-      });
-      const data = await resp.json();
-      if (!data.id) {
-        document.getElementById('result').innerText = 'Ошибка при создании вычисления.';
-        return;
-      }
-
-      // Периодически проверяем статус
-      const exprId = data.id;
-      const intervalId = setInterval(async () => {
-        const statusResp = await fetch(`${API}/expressions/${exprId}`, {
-          headers: authHeaders()
+      try {
+        const resp = await fetch(`${API}/calculate`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ expression: expr })
         });
-        const statusData = await statusResp.json();
-        console.log('statusData:', statusData);
 
-        if (statusData.expression.status === 'done') {
-          document.getElementById('result').innerText = 'Результат: ' + statusData.expression.result;
-          clearInterval(intervalId);
-        } else {
-          document.getElementById('result').innerText = 'Статус: ' + statusData.expression.status;
+        if (!resp.ok) {
+          resultDiv.innerText = `Ошибка сервера: ${resp.status}`;
+          return;
         }
-      }, 1000);
+
+        const data = await resp.json();
+        if (!data.id) {
+          resultDiv.innerText = 'Ошибка при создании вычисления.';
+          return;
+        }
+
+        const exprId = data.id;
+        const intervalId = setInterval(async () => {
+          try {
+            const statusResp = await fetch(`${API}/expressions/${exprId}`, {
+              headers: authHeaders()
+            });
+
+            if (!statusResp.ok) {
+              resultDiv.innerText = `Ошибка получения статуса: ${statusResp.status}`;
+              clearInterval(intervalId);
+              return;
+            }
+
+            const statusData = await statusResp.json();
+            console.log('Ответ сервера:', statusData);
+
+            if (!statusData || !statusData.expression) {
+              resultDiv.innerText = 'Неверный формат ответа сервера.';
+              clearInterval(intervalId);
+              return;
+            }
+
+            if (statusData.expression.Status === 'done') {
+              resultDiv.innerText = 'Результат: ' + (statusData.expression.Result ?? 'не определён');
+              clearInterval(intervalId);
+            } else {
+              resultDiv.innerText = 'Статус: ' + statusData.expression.Status;
+            }
+          } catch (err) {
+            console.error('Ошибка запроса:', err);
+            resultDiv.innerText = 'Ошибка получения статуса.';
+            clearInterval(intervalId);
+          }
+        }, 1000);
+
+      } catch (err) {
+        console.error('Ошибка отправки выражения:', err);
+        resultDiv.innerText = 'Ошибка отправки выражения.';
+      }
     });
 
-    // Выход
     document.getElementById('logoutBtn').addEventListener('click', () => {
       token = null;
       document.getElementById('calculator').classList.add('hidden');
       document.getElementById('auth').classList.remove('hidden');
       document.getElementById('authMessage').innerText = '';
-      document.getElementById('result').innerText      = '';
+      document.getElementById('result').innerText = '';
     });
   </script>
+
 </body>
 </html>

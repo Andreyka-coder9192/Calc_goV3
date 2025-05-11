@@ -1,9 +1,10 @@
-package application
+package tests
 
 import (
 	"context"
 	"testing"
 
+	"github.com/Andreyka-coder9192/calc_go/internal/application"
 	"github.com/Andreyka-coder9192/calc_go/proto/calc"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -11,7 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func setupOrchestrator(t *testing.T) (*Orchestrator, func()) {
+func setupOrchestrator(t *testing.T) (*application.Orchestrator, func()) {
 	db, err := sqlx.Connect("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +45,7 @@ func setupOrchestrator(t *testing.T) (*Orchestrator, func()) {
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatal(err)
 	}
-	orch := &Orchestrator{Config: ConfigFromEnv(), db: db}
+	orch := &application.Orchestrator{Config: application.ConfigFromEnv(), DB: db}
 	return orch, func() { db.Close() }
 }
 
@@ -64,11 +65,11 @@ func TestPostResult_FullFlow(t *testing.T) {
 	defer teardown()
 
 	// Вставляем выражение и задачу
-	res := orch.db.MustExec(
+	res := orch.DB.MustExec(
 		`INSERT INTO expressions(user_id, expr, status) VALUES (1, '(1+2)', 'pending')`,
 	)
 	exprID, _ := res.LastInsertId()
-	orch.db.MustExec(
+	orch.DB.MustExec(
 		`INSERT INTO tasks(id, expr_id, arg1, arg2, operation, operation_time)
 		 VALUES ('task1', ?, 1, 2, '+', 1)`,
 		exprID,
@@ -92,10 +93,10 @@ func TestPostResult_FullFlow(t *testing.T) {
 	// Проверка обновления выражения
 	var statusStr string
 	var resultVal float64
-	if err := orch.db.Get(&statusStr, "SELECT status FROM expressions WHERE id=?", exprID); err != nil {
+	if err := orch.DB.Get(&statusStr, "SELECT status FROM expressions WHERE id=?", exprID); err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.db.Get(&resultVal, "SELECT result FROM expressions WHERE id=?", exprID); err != nil {
+	if err := orch.DB.Get(&resultVal, "SELECT result FROM expressions WHERE id=?", exprID); err != nil {
 		t.Fatal(err)
 	}
 	if statusStr != "done" || resultVal != 3 {

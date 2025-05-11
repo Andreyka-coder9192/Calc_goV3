@@ -44,12 +44,12 @@ func NewAgent() *Agent {
 
 func (a *Agent) Run() {
 	for i := 0; i < a.ComputingPower; i++ {
-		go a.worker(i)
+		go a.Worker(i)
 	}
 	select {}
 }
 
-func (a *Agent) worker(id int) {
+func (a *Agent) Worker(id int) {
 	for {
 		task, err := a.grpcClient.GetTask(context.Background(), &calc.Empty{})
 		if err != nil {

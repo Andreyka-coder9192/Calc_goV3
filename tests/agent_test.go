@@ -1,4 +1,4 @@
-package application
+package tests
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Andreyka-coder9192/calc_go/internal/application"
 	"github.com/Andreyka-coder9192/calc_go/proto/calc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -61,14 +62,14 @@ func TestAgent_WorkerFlow(t *testing.T) {
 	defer restoreEnv("ORCHESTRATOR_URL", existing)
 
 	// Создаем агента с вычислительной мощностью 1
-	agent := NewAgent()
+	agent := application.NewAgent()
 	agent.ComputingPower = 1
 
 	// Запускаем одного рабочего, который сразу завершит цикл
 	done := make(chan struct{})
 	go func() {
 		// Запускаем worker напрямую
-		agent.worker(0)
+		agent.Worker(0)
 		close(done)
 	}()
 

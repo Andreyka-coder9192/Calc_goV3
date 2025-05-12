@@ -146,7 +146,7 @@ curl -X POST http://localhost:8080/api/v1/calculate \
 
 ### Тестирование
 ```bash
-go test -v ./cmd/agent
+go test ./...
 ```
 
 ### Переменные окружения
